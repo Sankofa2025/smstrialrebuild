@@ -3,7 +3,7 @@
    The FIRST submission emails that address an activation link — click it once.
    While the example address is set, forms run in DEMO MODE (succeed silently). */
 window.SMS_CONFIG = {
-  formEmail: "your-email@example.com",
+  formEmail: "lexmathai@gmail.com",
   firmName: "Stewart Miller Simmons",
   phoneDisplay: "404-LAW-FIRM",
   phonePretty: "(404) 529-3476",
