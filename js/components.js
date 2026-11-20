@@ -1,4 +1,6 @@
-/* COMPONENTS — shared header, footer, forms, lead submission (FormSubmit AJAX). */
+/* COMPONENTS — shared header, footer, forms, lead submission (FormSubmit AJAX).
+   submitLead() never hangs: 12s timeout, tolerant response parsing,
+   activation detection, and an on-device retry queue. */
 (function(){
 var R=window.ROOT||"",C=window.SMS_CONFIG;
 var I={
@@ -24,14 +26,39 @@ spine:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="
 home:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10l9-7 9 7v10a2 2 0 01-2 2H5a2 2 0 01-2-2V10z"/><path d="M9 22V12h6v10"/></svg>',
 alert:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L2 20h20L12 3zm0 7v4m0 3.5v.5"/></svg>'
 };
-function submitLead(payload,subject){
- var demo=/example\.com$/i.test(C.formEmail);
- var body=Object.assign({},payload,{_subject:subject||"New Lead — SMS Trial site",_captcha:"false",_template:"table"});
- if(demo){console.info("[DEMO MODE] Lead captured (set js/config.js formEmail to deliver):",body);
-  return new Promise(function(res){setTimeout(function(){res({success:"true",demo:true});},700);});}
- return fetch("https://formsubmit.co/ajax/"+encodeURIComponent(C.formEmail),{method:"POST",
-  headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)}).then(function(r){return r.json();});
+function send(body){
+ var ctrl=("AbortController" in window)?new AbortController():null;
+ var timer=setTimeout(function(){if(ctrl)ctrl.abort();},12000);
+ var opts={method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify(body)};
+ if(ctrl)opts.signal=ctrl.signal;
+ return fetch("https://formsubmit.co/ajax/"+encodeURIComponent(C.formEmail),opts).then(function(r){
+  return r.text().then(function(t){
+   var j=null;try{j=JSON.parse(t);}catch(e){}
+   var msg=(j&&(j.message||""))||t||"";
+   var failed=j&&(j.success==="false"||j.success===false);
+   var activation=/activat/i.test(msg)||failed;
+   var ok=r.ok&&!activation;
+   return {ok:ok,activation:activation};
+  });
+ }).catch(function(){return {ok:false,activation:false,error:"network"};}).then(function(res){clearTimeout(timer);return res;});
 }
+function queueLead(payload,subject){try{var q=JSON.parse(localStorage.getItem("sms_lead_queue")||"[]");q.push({p:payload,s:subject});localStorage.setItem("sms_lead_queue",JSON.stringify(q.slice(-10)));}catch(e){}}
+function submitLead(payload,subject){
+ var body=Object.assign({},payload,{_subject:subject||"New Lead — SMS Trial site",_captcha:"false",_template:"table"});
+ if(/example\.com$/i.test(C.formEmail)){console.info("[DEMO MODE] Lead captured (set js/config.js formEmail to deliver):",body);return Promise.resolve({ok:true,demo:true});}
+ return send(body).then(function(res){if(!res.ok)queueLead(payload,subject);return res;});
+}
+function flushQueue(){
+ if(/example\.com$/i.test(C.formEmail))return;
+ var q;try{q=JSON.parse(localStorage.getItem("sms_lead_queue")||"[]");}catch(e){return;}
+ if(!q.length)return;
+ try{localStorage.removeItem("sms_lead_queue");}catch(e){}
+ q.forEach(function(item){
+  var body=Object.assign({},item.p,{_subject:item.s||"New Lead — SMS Trial site",_captcha:"false",_template:"table"});
+  send(body).then(function(res){if(!res.ok)queueLead(item.p,item.s);});
+ });
+}
+setTimeout(flushQueue,5000);
 var AREAS=[["sexual-assault","Sexual Assault Victims"],["personal-injury","Personal Injury Law"],["wrongful-death","Wrongful Death"],["trucking-accidents","Trucking Accidents"],["motor-vehicle-accidents","Motor Vehicle Accidents"],["spinal-cord-injury","Spinal Cord Injury"],["premises-liability","Premises Liability"],["apartment-shootings","Apartment Shootings"]];
 var NAV=[["","Home"],["practice-areas/","Practice Areas"],["case-results/","Case Results"],["attorneys/","Attorneys"],["media/","Media"],["news/","News"],["reviews/","Reviews"],["contact/","Contact"]];
 var ANN=[["SMS WELCOMES NEW ATTORNEY KELLEY SIMONEAUX","attorneys/"],["NOW TAKING SPINAL CORD &amp; SERIOUS INJURY CASES","practice-areas/spinal-cord-injury.html"],["SMS ANNOUNCES THE OPENING OF ITS DC OFFICE","contact/"],["CONYERS EXPLOSION LAWSUIT — FREE CASE EVALUATION","contact/"]];
@@ -72,9 +99,15 @@ document.addEventListener("submit",function(e){
  var data={};new FormData(form).forEach(function(v,k){if(k!=="_honey")data[k]=v;});
  var orig=btn.textContent;btn.disabled=true;btn.textContent="Sending…";if(status){status.className="f-status";status.textContent="";}
  submitLead(data,"New Case Evaluation — "+(form.dataset.form||"Website")).then(function(res){
-  sessionStorage.setItem("sms_lead_captured","1");
-  if(status){status.className="f-status ok";status.textContent=(res&&res.demo)?"✓ Received (demo mode — set your FormSubmit email in js/config.js to deliver leads).":"✓ Thank you. Our team will reach out shortly. For urgent matters call "+C.phonePretty+".";}
-  form.reset();form.dispatchEvent(new CustomEvent("sms:lead"));
+  if(res.ok){
+   sessionStorage.setItem("sms_lead_captured","1");
+   if(status){status.className="f-status ok";status.textContent=res.demo?"✓ Received (demo mode — set your FormSubmit email in js/config.js to deliver leads).":"✓ Thank you. Our team will reach out shortly. For urgent matters call "+C.phonePretty+".";}
+   form.reset();form.dispatchEvent(new CustomEvent("sms:lead"));
+  }else if(res.activation){
+   if(status){status.className="f-status ok";status.textContent="🔐 One-time setup: FormSubmit just emailed an activation link to our inbox. Once it's clicked, press submit again — your info is saved on this device.";}
+  }else{
+   if(status){status.className="f-status err";status.textContent="Connection hiccup — your info is saved on this device. Try again, or call "+C.phonePretty+".";}
+  }
  }).catch(function(){if(status){status.className="f-status err";status.textContent="Something went wrong — please call "+C.phonePretty+".";}})
  .finally(function(){btn.disabled=false;btn.textContent=orig;});});
 window.SMS={R:R,C:C,I:I,submitLead:submitLead,socialRow:socialRow,CASE_OPTIONS:CASE_OPTIONS,AREAS:AREAS};
