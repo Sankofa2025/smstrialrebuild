@@ -1,7 +1,6 @@
 /* CHATBOT — rule-based intake assistant (Intaker-style flow).
    10 case-type quick replies → guided intake → FormSubmit lead.
-   Free-text routed by keyword intents. Upgrade path: swap handleText()
-   for an LLM call via a Cloudflare Worker proxy. */
+   Send always reaches a final state: success / activation / retry. */
 (function(){
 var S=window.SMS,C=S.C,I=S.I,submitLead=S.submitLead;
 var mount=document.getElementById("chat-root");
@@ -47,9 +46,14 @@ function route(v){
   return botSay("Thank you. <b>What is your first and last name?</b>");}
  if(v==="send"){step="done";botSay("Sending your info to our intake team… 🔒",null,300);
   submitLead(lead,"Chatbot Lead — "+lead.case_type).then(function(res){
-   sessionStorage.setItem("sms_lead_captured","1");
-   botSay("✅ <b>You're all set, "+esc((lead.name||"").split(" ")[0])+".</b> Our team will reach out shortly"+((res&&res.demo)?" <i>(demo mode)</i>":"")+".<br><br>Need help right now? Call <a href='tel:"+C.phoneTel+"'>"+C.phonePretty+"</a>. 🦁",[{label:"📞 Call "+C.phoneDisplay,href:"tel:"+C.phoneTel},{label:"Start over",value:"restart"}],900);
-  }).catch(function(){botSay("Hmm, that didn't go through. Please call us at <a href='tel:"+C.phoneTel+"'>"+C.phonePretty+"</a> — we're standing by.");});
+   if(res.ok){sessionStorage.setItem("sms_lead_captured","1");
+    botSay("✅ <b>You're all set, "+esc((lead.name||"").split(" ")[0])+".</b> Our team will reach out shortly"+(res.demo?" <i>(demo mode)</i>":"")+".<br><br>Need help right now? Call <a href='tel:"+C.phoneTel+"'>"+C.phonePretty+"</a>. 🦁",[{label:"📞 Call "+C.phoneDisplay,href:"tel:"+C.phoneTel},{label:"Start over",value:"restart"}],900);
+   }else if(res.activation){step="confirm";
+    botSay("🔐 <b>One-time setup:</b> FormSubmit just emailed an activation link to our inbox (check spam). Once it's clicked, tap <b>Resend</b> and your info goes straight through — your answers are saved.",[{label:"🔁 Resend",value:"send"},{label:"📞 Call "+C.phoneDisplay,href:"tel:"+C.phoneTel}],700);
+   }else{step="confirm";
+    botSay("Hmm — the connection hiccuped, but your info is saved on this device. Tap <b>Retry</b>, or call us right now.",[{label:"🔁 Retry",value:"send"},{label:"📞 Call "+C.phoneDisplay,href:"tel:"+C.phoneTel}],700);}
+  }).catch(function(){step="confirm";
+   botSay("Hmm — something went wrong on this device. Please call us at <a href='tel:"+C.phoneTel+"'>"+C.phonePretty+"</a> — we're standing by.",[{label:"🔁 Retry",value:"send"},{label:"📞 Call "+C.phoneDisplay,href:"tel:"+C.phoneTel}],700);});
   return;}
  if(v==="restart"){step="idle";for(var k in lead)delete lead[k];
   return botSay("No problem — starting fresh. What kind of matter can we assist you with?","cases");}
