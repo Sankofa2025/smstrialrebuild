@@ -1,5 +1,6 @@
 /* POPUP — lead-capture modal. Exit-intent (desktop) OR 30s timer, once per
-   session. Clicking ✕ asks for a callback number first (with a skip link). */
+   session. Clicking ✕ asks for a callback number first (with a skip link).
+   Both forms always reach a final state: success / activation / retry. */
 (function(){
 var S=window.SMS,C=S.C,CASE_OPTIONS=S.CASE_OPTIONS,submitLead=S.submitLead;
 if(document.body.dataset.page==="contact")return;
@@ -30,10 +31,14 @@ addEventListener("keydown",function(e){if(e.key!=="Escape"||!ov.classList.contai
  steps.main.classList.contains("active")?show("mini"):dismiss();});
 steps.main.querySelector("form").addEventListener("sms:lead",function(){show("thanks");setTimeout(dismiss,2600);});
 mount.querySelector("#pp-call").addEventListener("click",function(){
- var inp=mount.querySelector("#pp-phone"),status=mount.querySelector("#pp-mini-status"),digits=inp.value.replace(/\D/g,"");
+ var inp=mount.querySelector("#pp-phone"),status=mount.querySelector("#pp-mini-status"),btn=mount.querySelector("#pp-call"),digits=inp.value.replace(/\D/g,"");
  if(digits.length<10){inp.classList.add("invalid");status.className="f-status err";status.textContent="Please enter a valid phone number.";return;}
  inp.classList.remove("invalid");
- submitLead({phone:inp.value,source:"Exit popup — callback request"},"Callback Request — Exit Popup").then(function(){
-  sessionStorage.setItem("sms_lead_captured","1");show("thanks");setTimeout(dismiss,2600);
- }).catch(function(){status.className="f-status err";status.textContent="Something went wrong — please call "+C.phonePretty+".";});});
+ var orig=btn.textContent;btn.disabled=true;btn.textContent="Sending…";status.className="f-status";status.textContent="";
+ submitLead({phone:inp.value,source:"Exit popup — callback request"},"Callback Request — Exit Popup").then(function(res){
+  btn.disabled=false;btn.textContent=orig;
+  if(res.ok){sessionStorage.setItem("sms_lead_captured","1");show("thanks");setTimeout(dismiss,2600);}
+  else if(res.activation){status.className="f-status ok";status.textContent="🔐 One-time setup: an activation link was just emailed to our inbox. Press “Call me” again in a moment — your number is saved.";}
+  else{status.className="f-status err";status.textContent="Connection hiccup — try again, or call "+C.phonePretty+".";}
+ }).catch(function(){btn.disabled=false;btn.textContent=orig;status.className="f-status err";status.textContent="Something went wrong — please call "+C.phonePretty+".";});});
 })();
